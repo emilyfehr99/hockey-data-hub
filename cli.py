@@ -1,8 +1,8 @@
 """
 Hockey Data Hub CLI
 ===================
-Unified command-line interface to extract, harmonize, and query
-hockey data across NHL API, NST, A3Z, and Hudl/InStat.
+Unified command-line interface to explore, harmonize, and query
+hockey tracking data, shot coordinates, and game logs.
 """
 
 from __future__ import annotations
@@ -15,6 +15,22 @@ import pandas as pd
 
 BASE_DIR = Path(__file__).resolve().parent
 DUCKDB_PATH = BASE_DIR / "data" / "duckdb" / "hockey_master.duckdb"
+PARQUET_DIR = BASE_DIR / "data" / "parquet"
+
+
+def get_connection() -> duckdb.DuckDBPyConnection:
+    """Connect to master database, automatically initializing tables and views from Parquet if needed."""
+    DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(str(DUCKDB_PATH))
+    if PARQUET_DIR.exists():
+        tables = [r[0] for r in conn.execute("SHOW TABLES;").fetchall()]
+        dim_file = PARQUET_DIR / "dim_players.parquet"
+        if "dim_players" not in tables and dim_file.exists():
+            conn.execute(f"CREATE TABLE dim_players AS SELECT * FROM read_parquet('{dim_file}');")
+        for p in sorted(PARQUET_DIR.iterdir()):
+            if p.is_dir() and list(p.glob("**/*.parquet")):
+                conn.execute(f"CREATE OR REPLACE VIEW {p.name} AS SELECT * FROM read_parquet('{p}/**/*.parquet');")
+    return conn
 
 
 def cmd_resolve(args):
@@ -27,7 +43,6 @@ def cmd_resolve(args):
 
 def cmd_status(args):
     """Show database summary and row counts across all Parquet datasets and DuckDB views."""
-    PARQUET_DIR = BASE_DIR / "data" / "parquet"
     print("=== Hockey Data Hub Storage Status ===")
     print(f"Parquet Base: {PARQUET_DIR}")
     
@@ -42,28 +57,19 @@ def cmd_status(args):
                     cnt = duckdb.execute(f"SELECT COUNT(*) FROM read_parquet('{p}/**/*.parquet');").fetchone()[0]
                     print(f"  • {p.name:32s}: {cnt:>8,d} rows ({len(parquet_files)} files)")
 
-    if DUCKDB_PATH.exists():
-        print(f"\nDuckDB Master Views ({DUCKDB_PATH}):")
-        conn = duckdb.connect(str(DUCKDB_PATH))
-        # Ensure views exist for any parquet dirs
-        for p in sorted(PARQUET_DIR.iterdir()):
-            if p.is_dir() and list(p.glob("**/*.parquet")):
-                conn.execute(f"CREATE OR REPLACE VIEW {p.name} AS SELECT * FROM read_parquet('{p}/**/*.parquet');")
-        tables = [r[0] for r in conn.execute("SHOW TABLES;").fetchall()]
-        for t in tables:
-            cnt = conn.execute(f"SELECT COUNT(*) FROM {t};").fetchone()[0]
-            print(f"  • {t:32s}: {cnt:>8,d} rows")
-        conn.close()
+    conn = get_connection()
+    tables = [r[0] for r in conn.execute("SHOW TABLES;").fetchall()]
+    print(f"\nDuckDB Master Views ({DUCKDB_PATH}):")
+    for t in tables:
+        cnt = conn.execute(f"SELECT COUNT(*) FROM {t};").fetchone()[0]
+        print(f"  • {t:32s}: {cnt:>8,d} rows")
+    conn.close()
 
 
 def cmd_search(args):
     """Search for a player across all linked IDs, draft details, and career stats."""
-    if not DUCKDB_PATH.exists():
-        print("Database not initialized. Run resolve first.")
-        return
-
     query = args.query.strip().lower()
-    conn = duckdb.connect(str(DUCKDB_PATH))
+    conn = get_connection()
     sql = f"""
     SELECT 
         full_name,
@@ -101,6 +107,18 @@ def cmd_search(args):
     conn.close()
 
 
+def cmd_query(args):
+    """Run an ad-hoc SQL query against the master database."""
+    conn = get_connection()
+    try:
+        df = conn.execute(args.sql).df()
+        print(df.to_string(index=False) if not df.empty else "Query returned 0 rows.")
+    except Exception as e:
+        print(f"Query Error: {e}")
+    finally:
+        conn.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Hockey Data Hub CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -117,6 +135,11 @@ def main():
     p_search = subparsers.add_parser("search", help="Search players in crosswalk")
     p_search.add_argument("query", type=str, help="Player name or slug")
     p_search.set_defaults(func=cmd_search)
+
+    # query
+    p_query = subparsers.add_parser("query", help="Run SQL query on master database")
+    p_query.add_argument("sql", type=str, help="SQL query string")
+    p_query.set_defaults(func=cmd_query)
 
     args = parser.parse_args()
     args.func(args)

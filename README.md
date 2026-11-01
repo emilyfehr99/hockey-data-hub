@@ -34,28 +34,33 @@ pip install -r requirements.txt
 ```
 
 ### 2. Using the CLI
-Check storage counts and verify active DuckDB views:
+Verify database tables and register all views automatically on first run:
 ```bash
 python3 cli.py status
 ```
 
-Look up any player to view draft history, career marks, and universal IDs:
+Look up any player to view draft pedigree, career marks, and universal IDs:
 ```bash
 python3 cli.py search pastrnak
 python3 cli.py search mcdavid
+```
+
+Run ad-hoc SQL queries directly from your terminal:
+```bash
+python3 cli.py query "SELECT full_name, career_goals, career_points FROM dim_players WHERE career_points >= 1000 ORDER BY career_points DESC LIMIT 5;"
 ```
 
 ---
 
 ## Querying with Python & DuckDB
 
-You can query the database directly in Python with zero memory overhead using DuckDB:
+You can query the database directly in Python with zero memory overhead:
 
 ```python
-import duckdb
+from cli import get_connection
 
-# Connect to the local master database
-con = duckdb.connect("data/duckdb/hockey_master.duckdb")
+# Connect to master database (auto-registers all views on first load)
+con = get_connection()
 
 # Top rush-shot creators with coordinates
 query = """
