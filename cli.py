@@ -119,8 +119,46 @@ def cmd_query(args):
         conn.close()
 
 
+def cmd_pbp(args):
+    """Fetch play-by-play for any game via unified API."""
+    import json
+    from api import get_pbp, get_events
+    if args.events_only:
+        df = get_events(args.game_id, args.type)
+        if df.empty:
+            print(f"No events found for game {args.game_id} in local warehouse.")
+        else:
+            print(df.to_string(index=False))
+        return
+
+    data = get_pbp(args.game_id)
+    if args.json_output:
+        print(json.dumps(data, indent=2))
+    else:
+        plays = data.get("plays", [])
+        away = data.get("awayTeam", {}).get("abbrev", "AWAY")
+        home = data.get("homeTeam", {}).get("abbrev", "HOME")
+        score = f"{data.get('awayTeam', {}).get('score', 0)} - {data.get('homeTeam', {}).get('score', 0)}"
+        print(f"\n🏒 Game {args.game_id}: {away} @ {home} ({score})")
+        print(f"Total plays recorded: {len(plays):,d}")
+        goals = [p for p in plays if p.get("typeDescKey") == "goal"]
+        if goals:
+            print("\nScoring Summary:")
+            for g in goals:
+                period = g.get("periodDescriptor", {}).get("number", "?")
+                time_in = g.get("timeInPeriod", "")
+                desc = g.get("details", {}).get("desc", g.get("typeDescKey"))
+                print(f"  • P{period} {time_in}: {desc}")
+
+
+def cmd_serve(args):
+    """Launch instant REST API server."""
+    from api import serve
+    serve(port=args.port, host=args.host)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Hockey Data Hub CLI")
+    parser = argparse.ArgumentParser(description="Hockey Data Hub CLI - Unified Hockey Data Warehouse & API")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # resolve
@@ -140,6 +178,20 @@ def main():
     p_query = subparsers.add_parser("query", help="Run SQL query on master database")
     p_query.add_argument("sql", type=str, help="SQL query string")
     p_query.set_defaults(func=cmd_query)
+
+    # pbp
+    p_pbp = subparsers.add_parser("pbp", help="Fetch play-by-play for any game ID")
+    p_pbp.add_argument("game_id", type=str, help="NHL Game ID (e.g. 2024020001)")
+    p_pbp.add_argument("--json", dest="json_output", action="store_true", help="Output full raw JSON")
+    p_pbp.add_argument("--events-only", action="store_true", help="Query warehouse normalized events")
+    p_pbp.add_argument("--type", type=str, default=None, help="Filter event type (e.g. HIT, GOAL, SHOT)")
+    p_pbp.set_defaults(func=cmd_pbp)
+
+    # serve
+    p_srv = subparsers.add_parser("serve", help="Start local HTTP REST API server")
+    p_srv.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
+    p_srv.add_argument("--host", type=str, default="127.0.0.1", help="Host interface (default: 127.0.0.1)")
+    p_srv.set_defaults(func=cmd_serve)
 
     args = parser.parse_args()
     args.func(args)
