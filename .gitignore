@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+env/
+venv/
+ENV/
+
+# Data and Proprietary Assets
+# Raw subscriber and enterprise data (Keep local, do NOT commit to public repo)
+data/raw/
+data/private/
+*.db
+*.sqlite
+*.sqlite3
+data/duckdb/*.duckdb
+data/duckdb/*.duckdb.wal
+
+# Tokens and Auth Files
+*.env
+.env*
+!*.env.example
+data/session.json
+*.json.bak*
+*cache*.db
+*headers*.json
+
+# Logs & OS
+*.log
+.DS_Store
+.idea/
+.vscode/

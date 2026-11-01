@@ -1,0 +1,68 @@
+name: Backfill Hockey Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_season:
+        description: 'Season to start backwards backfill from (e.g. 20242025)'
+        required: true
+        default: '20242025'
+      end_season:
+        description: 'Season to end backwards backfill at (e.g. 20072008)'
+        required: true
+        default: '20072008'
+      run_boxscores:
+        description: 'Extract game boxscores'
+        type: boolean
+        default: true
+      run_possession:
+        description: 'Extract 5v5 possession & line combinations'
+        type: boolean
+        default: true
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Game Boxscore Extractor
+        if: ${{ inputs.run_boxscores }}
+        run: |
+          python3 pipelines/extract_nhl.py \
+            --backfill-from ${{ inputs.start_season }} \
+            --backfill-to ${{ inputs.end_season }}
+
+      - name: Run Possession & Combinations Extractor
+        if: ${{ inputs.run_possession }}
+        run: |
+          python3 pipelines/extract_possession.py \
+            --backfill-from ${{ inputs.start_season }} \
+            --backfill-to ${{ inputs.end_season }}
+
+      - name: Commit and Push Parquet Datasets
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/parquet/
+          if git diff --staged --quiet; then
+            echo "No new data changes to commit."
+          else
+            git commit -m "data: backfill parquet partitions ${{ inputs.start_season }} to ${{ inputs.end_season }}"
+            git push
+          fi
