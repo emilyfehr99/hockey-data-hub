@@ -157,6 +157,21 @@ def cmd_serve(args):
     serve(port=args.port, host=args.host)
 
 
+def cmd_render_goal(args):
+    """Generate interactive 60fps HTML5 rink visualizer for a goal event."""
+    from visualizer.generate_visualizer import generate_goal_html
+    out_path = Path(args.output) if args.output else None
+    try:
+        res = generate_goal_html(args.game_id, args.event_id, output_path=out_path)
+        print(f"Goal replay visualizer generated successfully:")
+        print(f"  • File: {res}")
+        if args.open:
+            import webbrowser
+            webbrowser.open(f"file://{res.resolve()}")
+    except Exception as e:
+        print(f"Error rendering goal visualizer: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Hockey Data Hub CLI - Unified Hockey Data Warehouse & API")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -192,6 +207,14 @@ def main():
     p_srv.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
     p_srv.add_argument("--host", type=str, default="127.0.0.1", help="Host interface (default: 127.0.0.1)")
     p_srv.set_defaults(func=cmd_serve)
+
+    # render-goal
+    p_goal = subparsers.add_parser("render-goal", help="Generate zero-latency 60fps HTML5 rink visualizer for a goal")
+    p_goal.add_argument("game_id", type=int, help="Game ID (e.g. 2024020008)")
+    p_goal.add_argument("event_id", type=int, help="Event ID (e.g. 347)")
+    p_goal.add_argument("--output", "-o", type=str, default=None, help="Output HTML file path")
+    p_goal.add_argument("--open", action="store_true", help="Automatically open generated visualizer in browser")
+    p_goal.set_defaults(func=cmd_render_goal)
 
     args = parser.parse_args()
     args.func(args)

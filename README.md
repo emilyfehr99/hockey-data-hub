@@ -15,6 +15,7 @@ Built on DuckDB and partitioned Apache Parquet for zero-copy SQL querying and lo
 | **`fct_goalie_game`** | Partitioned Parquet | Game-by-game goaltender performance, decisions, shots against, saves, and save percentages. |
 | **`fct_shot_coordinates`** | Parquet / DuckDB | 85,000+ individual shots mapped with rink $(x, y)$ coordinates, shot types, rebound flags, and rush flags. |
 | **`fct_event_pbp`** | Parquet / DuckDB | 720,000+ event-level micro-actions (controlled entries, breakouts, passes, battles) with durations and locations. |
+| **`fct_goal_sprites`** | Partitioned Parquet | 10 Hz high-frequency puck and skater tracking coordinates (120 frames per goal) for 60fps 2D replay rendering. |
 | **`fct_skater_transitions`** | Partitioned Parquet | 5v5 transition metrics, entry denial rates, carried breakout percentages, and microstat game scores. |
 | **`fct_line_pairings`** | Partitioned Parquet | Forward trios and defensive pairings with 5v5 time on ice and possession rates. |
 
@@ -48,6 +49,11 @@ python3 cli.py search mcdavid
 Run ad-hoc SQL queries directly from your terminal:
 ```bash
 python3 cli.py query "SELECT full_name, career_goals, career_points FROM dim_players WHERE career_points >= 1000 ORDER BY career_points DESC LIMIT 5;"
+```
+
+Generate an interactive 60fps HTML5 rink visualizer for any goal:
+```bash
+python3 cli.py render-goal 2024020008 347 --open
 ```
 
 ---
@@ -123,6 +129,11 @@ Use `fct_shot_coordinates` and `fct_goalie_game` to study goaltending rebound vu
 Use `dim_players` and `fct_skater_game` to study draft capital efficiency:
 * Plot career points per game as a function of draft pick number (Pick 1 through 224).
 * Track scoring trajectories across player ages (18 to 35) to model peak performance windows.
+
+### 6. Zero-Latency 2D Goal Replays & Spatial Heatmaps
+Replay any scoring sequence using 10 Hz sensor tracking data stored in `fct_goal_sprites`:
+* Track puck trajectory, skater speeds, and defensive spacing leading up to a goal.
+* Render standalone 60fps HTML5 Canvas rink animations without external dependencies or cloud latency.
 
 ---
 
