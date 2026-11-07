@@ -183,38 +183,78 @@ class NHLExtractor:
 
         return skater_rows, goalie_rows
 
-    def run_season(self, season: int, max_games: Optional[int] = None):
+    def run_season(self, season: int, max_games: Optional[int] = None, incremental: bool = True):
         """Extract all games for a season and save to Parquet."""
         games = self.get_season_games(season)
         if max_games:
             games = games[:max_games]
 
+        skater_file = PARQUET_BASE / "fct_skater_game" / f"season={season}" / "part-0.parquet"
+        goalie_file = PARQUET_BASE / "fct_goalie_game" / f"season={season}" / "part-0.parquet"
+
+        existing_skater_df = None
+        existing_goalie_df = None
+        synced_game_ids = set()
+
+        if incremental and skater_file.exists():
+            try:
+                existing_skater_df = pd.read_parquet(skater_file)
+                if "game_id" in existing_skater_df.columns:
+                    synced_game_ids = set(existing_skater_df["game_id"].unique())
+            except Exception as e:
+                logger.warning(f"Could not read existing skater parquet: {e}")
+
+        if incremental and goalie_file.exists():
+            try:
+                existing_goalie_df = pd.read_parquet(goalie_file)
+            except Exception as e:
+                logger.warning(f"Could not read existing goalie parquet: {e}")
+
+        games_to_fetch = [g for g in games if g["game_id"] not in synced_game_ids]
+        if not games_to_fetch:
+            logger.info(f"All {len(games)} games for season {season} are already synced.")
+            return
+
+        logger.info(f"Syncing {len(games_to_fetch)} new/pending games (out of {len(games)} total games)...")
         all_skaters = []
         all_goalies = []
 
-        logger.info(f"Extracting boxscores for {len(games)} games...")
-        for i, g in enumerate(games, 1):
+        for i, g in enumerate(games_to_fetch, 1):
             s_rows, g_rows = self.extract_game(g)
             all_skaters.extend(s_rows)
             all_goalies.extend(g_rows)
-            if i % 50 == 0 or i == len(games):
-                logger.info(f"Progress: {i}/{len(games)} games processed.")
+            if i % 50 == 0 or i == len(games_to_fetch):
+                logger.info(f"Progress: {i}/{len(games_to_fetch)} games processed.")
             time.sleep(0.1)
 
-        # Write Parquet partitions
-        if all_skaters:
+        # Merge and write Parquet partitions
+        if all_skaters or existing_skater_df is not None:
             skater_dir = PARQUET_BASE / "fct_skater_game" / f"season={season}"
             skater_dir.mkdir(parents=True, exist_ok=True)
-            df_skaters = pd.DataFrame(all_skaters)
-            df_skaters.to_parquet(skater_dir / "part-0.parquet", index=False)
-            logger.info(f"Saved {len(df_skaters)} skater game rows to {skater_dir}")
+            new_skater_df = pd.DataFrame(all_skaters) if all_skaters else pd.DataFrame()
+            if existing_skater_df is not None and not existing_skater_df.empty:
+                df_skaters = pd.concat([existing_skater_df, new_skater_df], ignore_index=True)
+                df_skaters.drop_duplicates(subset=["game_id", "player_uuid"], keep="last", inplace=True)
+            else:
+                df_skaters = new_skater_df
 
-        if all_goalies:
+            if not df_skaters.empty:
+                df_skaters.to_parquet(skater_dir / "part-0.parquet", index=False)
+                logger.info(f"Saved {len(df_skaters)} skater game rows to {skater_dir}")
+
+        if all_goalies or existing_goalie_df is not None:
             goalie_dir = PARQUET_BASE / "fct_goalie_game" / f"season={season}"
             goalie_dir.mkdir(parents=True, exist_ok=True)
-            df_goalies = pd.DataFrame(all_goalies)
-            df_goalies.to_parquet(goalie_dir / "part-0.parquet", index=False)
-            logger.info(f"Saved {len(df_goalies)} goalie game rows to {goalie_dir}")
+            new_goalie_df = pd.DataFrame(all_goalies) if all_goalies else pd.DataFrame()
+            if existing_goalie_df is not None and not existing_goalie_df.empty:
+                df_goalies = pd.concat([existing_goalie_df, new_goalie_df], ignore_index=True)
+                df_goalies.drop_duplicates(subset=["game_id", "player_uuid"], keep="last", inplace=True)
+            else:
+                df_goalies = new_goalie_df
+
+            if not df_goalies.empty:
+                df_goalies.to_parquet(goalie_dir / "part-0.parquet", index=False)
+                logger.info(f"Saved {len(df_goalies)} goalie game rows to {goalie_dir}")
 
 
 def main():
@@ -223,6 +263,7 @@ def main():
     parser.add_argument("--backfill-from", type=int, help="Start backwards backfill from season (e.g., 20242025)")
     parser.add_argument("--backfill-to", type=int, default=20072008, help="End backwards backfill at season")
     parser.add_argument("--max-games", type=int, default=None, help="Limit games per season (for testing)")
+    parser.add_argument("--force", action="store_true", help="Force re-extraction of already synced games")
     args = parser.parse_args()
 
     extractor = NHLExtractor()
@@ -230,12 +271,12 @@ def main():
         curr = args.backfill_from
         while curr >= args.backfill_to:
             logger.info(f"=== Backfilling Season {curr} ===")
-            extractor.run_season(curr, max_games=args.max_games)
+            extractor.run_season(curr, max_games=args.max_games, incremental=not args.force)
             # Decrement by 1 year (e.g. 20242025 -> 20232024)
             start_yr = curr // 10000 - 1
             curr = start_yr * 10000 + (start_yr + 1)
     else:
-        extractor.run_season(args.season, max_games=args.max_games)
+        extractor.run_season(args.season, max_games=args.max_games, incremental=not args.force)
 
 
 if __name__ == "__main__":

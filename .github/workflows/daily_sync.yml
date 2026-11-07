@@ -36,6 +36,9 @@ jobs:
           python3 pipelines/extract_nhl.py --season 20242025
 
       - name: Sync Current Season Possession & Combinations
+        env:
+          ADVANCED_METRICS_BASE_URL: ${{ secrets.ADVANCED_METRICS_BASE_URL }}
+          DATA_FEED_KEY: ${{ secrets.DATA_FEED_KEY }}
         run: |
           python3 pipelines/extract_possession.py --season 20242025
 

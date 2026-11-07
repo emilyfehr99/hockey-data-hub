@@ -28,9 +28,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DUCKDB_PATH = BASE_DIR / "data" / "duckdb" / "hockey_master.duckdb"
 PARQUET_PATH = BASE_DIR / "data" / "parquet" / "dim_players.parquet"
 
-LOCAL_TRACKING_DB = Path(os.getenv("TRANSITION_DB_PATH", ""))
-LOCAL_CACHE_DB = Path(os.getenv("MICROSTATS_CACHE_PATH", ""))
-RESOLVED_SHEET_PATH = Path("/Users/emilyfehr8/CascadeProjects/resolved_sheet_players.json")
+TRANSITION_DB_ENV = os.getenv("TRANSITION_DB_PATH", "").strip()
+LOCAL_TRACKING_DB = Path(TRANSITION_DB_ENV) if TRANSITION_DB_ENV else None
+
+MICROSTATS_CACHE_ENV = os.getenv("MICROSTATS_CACHE_PATH", "").strip()
+LOCAL_CACHE_DB = Path(MICROSTATS_CACHE_ENV) if MICROSTATS_CACHE_ENV else None
+
+RESOLVED_SHEET_ENV = os.getenv("RESOLVED_SHEET_PATH", "").strip()
+RESOLVED_SHEET_PATH = Path(RESOLVED_SHEET_ENV) if RESOLVED_SHEET_ENV else None
+
+
+def is_valid_file(p: Optional[Path]) -> bool:
+    return bool(p and str(p).strip() and p.is_file() and p.stat().st_size > 0)
+
 
 NHL_TEAMS_ALL = [
     "ANA", "BOS", "BUF", "CAR", "CBJ", "CGY", "CHI", "COL",
@@ -126,8 +136,81 @@ class EntityResolver:
         if norm:
             self.norm_name_to_uuids.setdefault(norm, []).append(p.player_uuid)
 
+    def upsert_player(self, p: PlayerDimension):
+        if p.player_uuid in self.players_by_uuid:
+            existing = self.players_by_uuid[p.player_uuid]
+            if p.is_active_nhl is not None:
+                existing.is_active_nhl = p.is_active_nhl
+            if p.current_team:
+                existing.current_team = p.current_team
+            if p.first_name and not existing.first_name:
+                existing.first_name = p.first_name
+            if p.last_name and not existing.last_name:
+                existing.last_name = p.last_name
+            if p.full_name and not existing.full_name:
+                existing.full_name = p.full_name
+            if p.primary_position and not existing.primary_position:
+                existing.primary_position = p.primary_position
+            if p.shoots_catches and not existing.shoots_catches:
+                existing.shoots_catches = p.shoots_catches
+            if p.height_inches and not existing.height_inches:
+                existing.height_inches = p.height_inches
+            if p.weight_lbs:
+                existing.weight_lbs = p.weight_lbs
+            if p.birth_date and not existing.birth_date:
+                existing.birth_date = p.birth_date
+            if p.birth_country and not existing.birth_country:
+                existing.birth_country = p.birth_country
+            if p.nhl_player_id and not existing.nhl_player_id:
+                existing.nhl_player_id = p.nhl_player_id
+                self.nhl_id_to_uuid[p.nhl_player_id] = p.player_uuid
+            if p.tracking_player_id and not existing.tracking_player_id:
+                existing.tracking_player_id = p.tracking_player_id
+                self.tracking_id_to_uuid[p.tracking_player_id] = p.player_uuid
+            if p.player_slug and not existing.player_slug:
+                existing.player_slug = p.player_slug
+                self.slug_to_uuid[p.player_slug] = p.player_uuid
+        else:
+            self.add_player(p)
+
+    def load_existing_dimension(self):
+        if not PARQUET_PATH.exists():
+            return
+        logger.info(f"Loading existing player dimension from {PARQUET_PATH}...")
+        df = pd.read_parquet(PARQUET_PATH)
+        int_fields = {
+            "nhl_player_id", "tracking_player_id", "draft_year", "draft_round",
+            "draft_overall", "height_inches", "weight_lbs", "career_gp",
+            "career_goals", "career_assists", "career_points"
+        }
+        loaded = 0
+        for _, row in df.iterrows():
+            clean_dict = {}
+            for k, v in row.to_dict().items():
+                if k not in PlayerDimension.__dataclass_fields__:
+                    continue
+                if pd.isna(v):
+                    clean_dict[k] = None
+                elif k in int_fields:
+                    try:
+                        clean_dict[k] = int(v)
+                    except (ValueError, TypeError):
+                        clean_dict[k] = None
+                elif k == "is_active_nhl":
+                    clean_dict[k] = bool(v)
+                else:
+                    clean_dict[k] = str(v)
+            p = PlayerDimension(**clean_dict)
+            self.add_player(p)
+            loaded += 1
+        logger.info(f"Loaded {loaded} existing players from {PARQUET_PATH}.")
+
     def load_league_active_rosters(self):
         logger.info("Ingesting active rosters from league API...")
+        # Mark all existing as inactive before checking current rosters
+        for p in self.players_by_uuid.values():
+            p.is_active_nhl = False
+
         count = 0
         for team in NHL_TEAMS_ALL:
             url = f"https://api-web.nhle.com/v1/roster/{team}/current"
@@ -162,7 +245,7 @@ class EntityResolver:
                             current_team=team,
                             is_active_nhl=True
                         )
-                        self.add_player(p)
+                        self.upsert_player(p)
                         count += 1
             except Exception as e:
                 logger.warning(f"Could not fetch roster for {team}: {e}")
@@ -170,7 +253,7 @@ class EntityResolver:
         logger.info(f"Loaded {count} active players.")
 
     def load_resolved_sheet_players(self):
-        if not RESOLVED_SHEET_PATH.exists():
+        if not is_valid_file(RESOLVED_SHEET_PATH):
             return
         logger.info("Loading pre-resolved sheet player mappings...")
         with open(RESOLVED_SHEET_PATH, "r") as f:
@@ -189,26 +272,21 @@ class EntityResolver:
             resolved_name = val.get("resolved_name", sheet_key)
             uid = self._get_or_create_uuid(nhl_id=pid)
             
-            if uid in self.players_by_uuid:
-                p = self.players_by_uuid[uid]
-                if not p.full_name:
-                    p.full_name = resolved_name
-            else:
-                p = PlayerDimension(
-                    player_uuid=uid,
-                    nhl_player_id=pid,
-                    full_name=resolved_name,
-                    primary_position=val.get("position"),
-                    current_team=val.get("team"),
-                    is_active_nhl=val.get("active", False)
-                )
-                self.add_player(p)
-                linked += 1
+            p = PlayerDimension(
+                player_uuid=uid,
+                nhl_player_id=pid,
+                full_name=resolved_name,
+                primary_position=val.get("position"),
+                current_team=val.get("team"),
+                is_active_nhl=val.get("active", False)
+            )
+            self.upsert_player(p)
+            linked += 1
 
         logger.info(f"Incorporated {len(data)} sheet players ({linked} new entries).")
 
     def link_transition_players(self):
-        if not LOCAL_TRACKING_DB.exists():
+        if not is_valid_file(LOCAL_TRACKING_DB):
             return
         logger.info("Resolving players from transition tracking database...")
         conn = sqlite3.connect(LOCAL_TRACKING_DB)
@@ -257,7 +335,7 @@ class EntityResolver:
         logger.info(f"Transition Resolution: {matched} linked to league IDs, {created} new non-roster entries.")
 
     def link_cached_micro_players(self):
-        if not LOCAL_CACHE_DB.exists():
+        if not is_valid_file(LOCAL_CACHE_DB):
             return
         logger.info("Resolving players from cached tracking records...")
         conn = sqlite3.connect(LOCAL_CACHE_DB)
@@ -338,6 +416,7 @@ class EntityResolver:
 
 def run_phase_1():
     resolver = EntityResolver()
+    resolver.load_existing_dimension()
     resolver.load_league_active_rosters()
     resolver.load_resolved_sheet_players()
     resolver.link_transition_players()

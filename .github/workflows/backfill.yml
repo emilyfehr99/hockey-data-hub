@@ -50,6 +50,9 @@ jobs:
 
       - name: Run Possession & Combinations Extractor
         if: ${{ inputs.run_possession }}
+        env:
+          ADVANCED_METRICS_BASE_URL: ${{ secrets.ADVANCED_METRICS_BASE_URL }}
+          DATA_FEED_KEY: ${{ secrets.DATA_FEED_KEY }}
         run: |
           python3 pipelines/extract_possession.py \
             --backfill-from ${{ inputs.start_season }} \

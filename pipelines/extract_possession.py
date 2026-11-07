@@ -26,7 +26,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 PARQUET_BASE = BASE_DIR / "data" / "parquet"
 DIM_PLAYERS_PATH = PARQUET_BASE / "dim_players.parquet"
 
-FEED_BASE_URL = os.getenv("ADVANCED_METRICS_BASE_URL", "")
+FEED_BASE_URL = os.getenv("ADVANCED_METRICS_BASE_URL", "").strip()
 
 
 def toi_to_seconds(toi_str: Any) -> int:
@@ -57,20 +57,23 @@ class PossessionExtractor:
 
     def _fetch_table(self, endpoint: str, params: Dict[str, Any]) -> Optional[pd.DataFrame]:
         """Fetch and parse data table from endpoint."""
+        if not FEED_BASE_URL:
+            return None
+
         if self.api_key:
             params["key"] = self.api_key
 
         qs = urllib.parse.urlencode(params)
-        url = f"{FEED_BASE_URL}/{endpoint}?{qs}"
+        url = f"{FEED_BASE_URL.rstrip('/')}/{endpoint}?{qs}"
         
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (HockeyDataHub/1.0)",
-                "Accept": "text/html,application/xhtml+xml"
-            }
-        )
         try:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (HockeyDataHub/1.0)",
+                    "Accept": "text/html,application/xhtml+xml"
+                }
+            )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 html = resp.read().decode("utf-8", errors="replace")
             
@@ -172,6 +175,10 @@ class PossessionExtractor:
 
     def run_season(self, season: int):
         """Extract and persist all tables for a season to Parquet."""
+        if not FEED_BASE_URL:
+            logger.info("ADVANCED_METRICS_BASE_URL not configured; skipping possession extraction.")
+            return
+
         # 1. Skaters
         df_skaters = self.extract_skater_on_ice(season)
         if df_skaters is not None and not df_skaters.empty:
