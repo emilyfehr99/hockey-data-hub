@@ -46,6 +46,25 @@ def toi_to_seconds(toi_str: Optional[str]) -> int:
         return 0
 
 
+def get_current_season() -> int:
+    """Detect current active NHL season dynamically."""
+    try:
+        url = "https://api-web.nhle.com/v1/schedule/now"
+        data = fetch_json(url)
+        if data:
+            gw = data.get("gameWeek", [])
+            for d in gw:
+                for g in d.get("games", []):
+                    if g.get("season"):
+                        return int(g["season"])
+    except Exception:
+        pass
+    import datetime
+    now = datetime.datetime.now()
+    year = now.year if now.month >= 9 else now.year - 1
+    return year * 10000 + (year + 1)
+
+
 def fetch_json(url: str, retries: int = 3, delay: float = 0.5) -> Optional[Dict[str, Any]]:
     """Polite HTTP fetch with retries and exponential backoff."""
     for attempt in range(retries):
@@ -259,8 +278,8 @@ class NHLExtractor:
 
 def main():
     parser = argparse.ArgumentParser(description="Extract NHL Official Game Data")
-    parser.add_argument("--season", type=int, default=20242025, help="Single season (e.g., 20242025)")
-    parser.add_argument("--backfill-from", type=int, help="Start backwards backfill from season (e.g., 20242025)")
+    parser.add_argument("--season", default="current", help="Single season (e.g., 20262027 or 'current')")
+    parser.add_argument("--backfill-from", help="Start backwards backfill from season (e.g., 'current' or 20262027)")
     parser.add_argument("--backfill-to", type=int, default=20072008, help="End backwards backfill at season")
     parser.add_argument("--max-games", type=int, default=None, help="Limit games per season (for testing)")
     parser.add_argument("--force", action="store_true", help="Force re-extraction of already synced games")
@@ -268,7 +287,7 @@ def main():
 
     extractor = NHLExtractor()
     if args.backfill_from:
-        curr = args.backfill_from
+        curr = get_current_season() if str(args.backfill_from).lower() == "current" else int(args.backfill_from)
         while curr >= args.backfill_to:
             logger.info(f"=== Backfilling Season {curr} ===")
             extractor.run_season(curr, max_games=args.max_games, incremental=not args.force)
@@ -276,7 +295,8 @@ def main():
             start_yr = curr // 10000 - 1
             curr = start_yr * 10000 + (start_yr + 1)
     else:
-        extractor.run_season(args.season, max_games=args.max_games, incremental=not args.force)
+        target_season = get_current_season() if str(args.season).lower() == "current" else int(args.season)
+        extractor.run_season(target_season, max_games=args.max_games, incremental=not args.force)
 
 
 if __name__ == "__main__":

@@ -207,23 +207,31 @@ class PossessionExtractor:
         time.sleep(1.0)
 
 
+def get_current_season() -> int:
+    import datetime
+    now = datetime.datetime.now()
+    year = now.year if now.month >= 9 else now.year - 1
+    return year * 10000 + (year + 1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Extract 5v5 Possession & Combination Data")
-    parser.add_argument("--season", type=int, default=20242025, help="Single season (e.g. 20242025)")
-    parser.add_argument("--backfill-from", type=int, help="Start backwards backfill from season")
+    parser.add_argument("--season", default="current", help="Single season (e.g. 20262027 or 'current')")
+    parser.add_argument("--backfill-from", help="Start backwards backfill from season")
     parser.add_argument("--backfill-to", type=int, default=20072008, help="End backwards backfill at season")
     args = parser.parse_args()
 
     extractor = PossessionExtractor()
     if args.backfill_from:
-        curr = args.backfill_from
+        curr = get_current_season() if str(args.backfill_from).lower() == "current" else int(args.backfill_from)
         while curr >= args.backfill_to:
             logger.info(f"=== Backfilling Season {curr} ===")
             extractor.run_season(curr)
             start_yr = curr // 10000 - 1
             curr = start_yr * 10000 + (start_yr + 1)
     else:
-        extractor.run_season(args.season)
+        target_season = get_current_season() if str(args.season).lower() == "current" else int(args.season)
+        extractor.run_season(target_season)
 
 
 if __name__ == "__main__":

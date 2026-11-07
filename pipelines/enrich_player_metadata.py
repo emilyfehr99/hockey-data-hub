@@ -47,7 +47,7 @@ def fetch_player_landing(pid: int) -> Optional[Dict[str, Any]]:
     return None
 
 
-def run_enrichment(limit: Optional[int] = None, max_workers: int = 8):
+def run_enrichment(limit: Optional[int] = None, max_workers: int = 8, active_only: bool = False):
     if not DIM_PLAYERS_PATH.exists():
         logger.error(f"dim_players not found at {DIM_PLAYERS_PATH}")
         return
@@ -66,6 +66,8 @@ def run_enrichment(limit: Optional[int] = None, max_workers: int = 8):
 
     # Filter players with nhl_player_id
     nhl_mask = df["nhl_player_id"].notna()
+    if active_only and "is_active_nhl" in df.columns:
+        nhl_mask = nhl_mask & (df["is_active_nhl"] == True)
     nhl_indices = df[nhl_mask].index.tolist()
     if limit:
         nhl_indices = nhl_indices[:limit]
@@ -126,9 +128,10 @@ def main():
     parser = argparse.ArgumentParser(description="Enrich Player Metadata")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of players to enrich")
     parser.add_argument("--workers", type=int, default=8, help="Concurrent HTTP worker threads")
+    parser.add_argument("--active-only", action="store_true", help="Only enrich currently active NHL players")
     args = parser.parse_args()
 
-    run_enrichment(limit=args.limit, max_workers=args.workers)
+    run_enrichment(limit=args.limit, max_workers=args.workers, active_only=args.active_only)
 
 
 if __name__ == "__main__":

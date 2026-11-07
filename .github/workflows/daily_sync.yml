@@ -27,20 +27,28 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Update Player Crosswalk (dim_players)
+      - name: Sync Player Crosswalk & Active Rosters
         run: |
           python3 pipelines/entity_resolution.py
 
-      - name: Sync Current Season Boxscores
+      - name: Enrich Active Player Metadata & Stats
         run: |
-          python3 pipelines/extract_nhl.py --season 20242025
+          python3 pipelines/enrich_player_metadata.py --active-only
+
+      - name: Sync Concluded Game Boxscores
+        run: |
+          python3 pipelines/extract_nhl.py --season current
+
+      - name: Sync High-Frequency Goal Tracking Sprites
+        run: |
+          python3 pipelines/extract_goal_sprites.py --season current --recent-games 15
 
       - name: Sync Current Season Possession & Combinations
         env:
           ADVANCED_METRICS_BASE_URL: ${{ secrets.ADVANCED_METRICS_BASE_URL }}
           DATA_FEED_KEY: ${{ secrets.DATA_FEED_KEY }}
         run: |
-          python3 pipelines/extract_possession.py --season 20242025
+          python3 pipelines/extract_possession.py --season current
 
       - name: Commit and Push Daily Updates
         run: |
